@@ -47,7 +47,7 @@ func getChatID(severity string) string {
 	case "Critical":
 		return criticalChatID
 	default:
-		return "" // If severity is unknown, chat ID is not defined
+		return ""
 	}
 }
 
@@ -81,13 +81,16 @@ func formatAlertMessage(alert Alert) string {
 }
 
 func alertHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("Received alert")
 	var msg AlertManagerMessage
 	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		log.Printf("Error decoding JSON: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	for _, alert := range msg.Alerts {
+		log.Printf("Processing alert: %v", alert)
 		chatID := getChatID(alert.Labels.Severity)
 		if chatID == "" {
 			log.Printf("Unknown severity level: %v", alert.Labels.Severity)
@@ -123,5 +126,6 @@ func main() {
 		log.Fatalf("Error creating Telegram bot: %v", err)
 	}
 	http.HandleFunc("/alert", alertHandler)
+	log.Println("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
