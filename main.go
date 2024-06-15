@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,13 +15,13 @@ import (
 const (
 	firingEmoji   = "❗️"
 	resolvedEmoji = "✅"
-
-	// Chat IDs for different severity levels
-	warningChatID  = "-4227313618"
-	criticalChatID = "-4250831819"
 )
 
-var bot *tgbotapi.BotAPI
+var (
+	bot            *tgbotapi.BotAPI
+	warningChatID  string
+	criticalChatID string
+)
 
 type Alert struct {
 	Status string `json:"status"`
@@ -120,8 +121,18 @@ func alertHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	var botToken string
+	flag.StringVar(&botToken, "token", "", "Telegram Bot API token")
+	flag.StringVar(&warningChatID, "warning-chat-id", "", "Chat ID for warning severity alerts")
+	flag.StringVar(&criticalChatID, "critical-chat-id", "", "Chat ID for critical severity alerts")
+	flag.Parse()
+
+	if botToken == "" || warningChatID == "" || criticalChatID == "" {
+		log.Fatalf("All flags -token, -warning-chat-id, and -critical-chat-id are required")
+	}
+
 	var err error
-	bot, err = tgbotapi.NewBotAPI("7318543145:AAGv18Tq_LiRkBTmecXL_hK88DxA6JOAzQs")
+	bot, err = tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		log.Fatalf("Error creating Telegram bot: %v", err)
 	}
