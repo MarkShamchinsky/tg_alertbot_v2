@@ -66,16 +66,27 @@ func formatAlertMessage(alert Alert) string {
 		return "" // Unsupported alert status
 	}
 
-	messageText := fmt.Sprintf("%s %s\n🔔 Summary: %s\n📝 Description: %s\n⚠️ Severity: %s\n🕒 Started at: %s UTC",
+	// Load the Moscow timezone location
+	loc, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		log.Printf("Error loading location: %v", err)
+		return ""
+	}
+
+	// Convert start and end times to Moscow time
+	startsAtMoscow := alert.StartsAt.In(loc)
+	endsAtMoscow := alert.EndsAt.In(loc)
+
+	messageText := fmt.Sprintf("%s %s\n🔔 Summary: %s\n📝 Description: %s\n⚠️ Severity: %s\n🕒 Started at: %s MSK",
 		emoji,
 		status,
 		alert.Annotations.Summary,
 		alert.Annotations.Description,
 		alert.Labels.Severity,
-		alert.StartsAt.Format("Jan 02, 15:04:05"))
+		startsAtMoscow.Format("Jan 02, 15:04:05"))
 
 	if alert.Status == "resolved" {
-		messageText += fmt.Sprintf("\n🕒 Resolved at: %s UTC", alert.EndsAt.Format("Jan 02, 15:04:05"))
+		messageText += fmt.Sprintf("\n🕒 Resolved at: %s MSK", endsAtMoscow.Format("Jan 02, 15:04:05"))
 	}
 
 	return messageText
