@@ -26,8 +26,11 @@ var (
 type Alert struct {
 	Status string `json:"status"`
 	Labels struct {
-		AlertName string `json:"alertname"`
-		Severity  string `json:"severity"`
+		AlertName    string `json:"alertname"`
+		Severity     string `json:"severity"`
+		ErrorMessage string `json:"errorMessage"`
+		StrategyName string `json:"strategyName"`
+		Name         string `json:"name"`
 	} `json:"labels"`
 	Annotations struct {
 		Summary     string `json:"summary"`
@@ -52,7 +55,12 @@ func getChatID(severity string) string {
 	}
 }
 
-func formatAlertMessage(alert Alert) string {
+func formatAlertMessage(alerts []Alert) string {
+	if len(alerts) == 0 {
+		return ""
+	}
+
+	alert := alerts[0] // Use the first alert for shared fields
 	var emoji, status string
 
 	switch alert.Status {
@@ -77,13 +85,32 @@ func formatAlertMessage(alert Alert) string {
 	startsAtMoscow := alert.StartsAt.In(loc)
 	endsAtMoscow := alert.EndsAt.In(loc)
 
-	messageText := fmt.Sprintf("%s %s\n🔔 Summary: %s\n📝 Description: %s\n⚠️ Severity: %s\n🕒 Started at: %s MSK",
+	var description string
+	if alert.Labels.ErrorMessage != "" {
+		// If there's an errorMessage, use it as the Description
+		description = alert.Labels.ErrorMessage
+	} else {
+		// Otherwise, use the existing Description field
+		description = alert.Annotations.Description
+	}
+
+	// Build the strategies list
+	strategiesInfo := ""
+	if alert.Labels.ErrorMessage != "" {
+		strategiesInfo = "\n\n📋 Strategies:"
+		for _, a := range alerts {
+			strategiesInfo += fmt.Sprintf("\n%s - %s", a.Labels.Name, a.Labels.StrategyName)
+		}
+	}
+
+	messageText := fmt.Sprintf("%s %s\n🔔 Summary: %s\n📝 Description: %s\n⚠️ Severity: %s\n🕒 Started at: %s MSK%s",
 		emoji,
 		status,
 		alert.Annotations.Summary,
-		alert.Annotations.Description,
+		description,
 		alert.Labels.Severity,
-		startsAtMoscow.Format("Jan 02, 15:04:05"))
+		startsAtMoscow.Format("Jan 02, 15:04:05"),
+		strategiesInfo)
 
 	if alert.Status == "resolved" {
 		messageText += fmt.Sprintf("\n🕒 Resolved at: %s MSK", endsAtMoscow.Format("Jan 02, 15:04:05"))
@@ -101,11 +128,27 @@ func alertHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	alertGroups := make(map[string][]Alert)
+
+	// Group alerts by ErrorMessage
 	for _, alert := range msg.Alerts {
-		log.Printf("Processing alert: %v", alert)
-		chatID := getChatID(alert.Labels.Severity)
+		errorMessage := alert.Labels.ErrorMessage
+		if errorMessage == "" {
+			// Use a special key for alerts without an error message
+			errorMessage = "NoErrorMessage"
+		}
+		alertGroups[errorMessage] = append(alertGroups[errorMessage], alert)
+	}
+
+	// Send messages for each group of alerts
+	for _, alerts := range alertGroups {
+		if len(alerts) == 0 {
+			continue
+		}
+
+		chatID := getChatID(alerts[0].Labels.Severity)
 		if chatID == "" {
-			log.Printf("Unknown severity level: %v", alert.Labels.Severity)
+			log.Printf("Unknown severity level: %v", alerts[0].Labels.Severity)
 			continue
 		}
 
@@ -115,10 +158,9 @@ func alertHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		messageText := formatAlertMessage(alert)
-
+		messageText := formatAlertMessage(alerts)
 		if messageText == "" {
-			log.Printf("Unsupported alert status: %v", alert.Status)
+			log.Printf("Unsupported alert status: %v", alerts[0].Status)
 			continue
 		}
 
