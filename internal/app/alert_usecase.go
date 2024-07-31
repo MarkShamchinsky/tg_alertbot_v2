@@ -39,7 +39,7 @@ func (u *alertUseCase) SendAlerts(alerts []ent.Alert) {
 		for _, alert := range alerts {
 			if alert.Labels.Severity == "Critical" {
 				callData := ent.CallData{
-					Number:     GetPhoneNumberByTime(),
+					Number:     getPhoneNumberByTime(),
 					LineNumber: "74951332210",
 					SipID:      "51326",
 				}
@@ -164,4 +164,21 @@ func (u *alertUseCase) formatAlertMessage(alerts []ent.Alert) string {
 	}
 
 	return strings.Join(messages, "\n\n")
+}
+
+func getPhoneNumberByTime() string {
+	currentTime := time.Now().In(time.FixedZone("MSK", 3*60*60)) // Московское время
+
+	switch {
+	case currentTime.Hour() >= 8 && currentTime.Hour() < 12:
+		return "+7911090909"
+	case currentTime.Hour() >= 18 && currentTime.Hour() < 23:
+		return "+7911090909"
+	case currentTime.Hour() >= 23 || currentTime.Hour() < 8:
+		return "+7911090908"
+	case currentTime.Hour() >= 12 && currentTime.Hour() < 18:
+		return "+7911090907"
+	default:
+		return ""
+	}
 }

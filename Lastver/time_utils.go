@@ -1,4 +1,4 @@
-package app
+/* package app
 
 import (
 	"encoding/json"
@@ -96,3 +96,4 @@ func GetPhoneNumberByTime() string {
 
 	return "" // Номер по умолчанию (если не найдено соответствие)
 }
+*\
