@@ -41,8 +41,15 @@ func main() {
 		log.Fatalf("Error creating Telegram bot: %v", err)
 	}
 
+	err = app.LoadSchedules()
+	if err != nil {
+		log.Fatalf("Error loading schedules: %v", err)
+	}
+
 	alertUseCase := app.NewAlertUseCase(telegramBot, plusofon)
 	alertController := ctrl.NewAlertController(alertUseCase)
+
+	go telegramBot.ListenForMessages()
 
 	http.HandleFunc("/alert", alertController.HandleAlert)
 	log.Println("Starting server on :8082")

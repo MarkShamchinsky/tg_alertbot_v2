@@ -39,7 +39,7 @@ func (u *alertUseCase) SendAlerts(alerts []ent.Alert) {
 		for _, alert := range alerts {
 			if alert.Labels.Severity == "Critical" {
 				callData := ent.CallData{
-					Number:     "79993332210",
+					Number:     GetPhoneNumberByTime(),
 					LineNumber: "74951332210",
 					SipID:      "51326",
 				}
