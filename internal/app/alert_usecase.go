@@ -3,6 +3,7 @@ package app
 import (
 	ent "AlertManagerBot/internal/entity"
 	"AlertManagerBot/internal/repo"
+
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -18,14 +19,16 @@ type AlertSender interface {
 }
 
 type alertUseCase struct {
-	alertRepo repo.TelegramSender
-	plusofon  *repo.Plusofon
+	alertRepo   repo.TelegramSender
+	plusofon    *repo.Plusofon
+	scheduleSvc *repo.ScheduleService
 }
 
-func NewAlertUseCase(ts repo.TelegramSender, p *repo.Plusofon) AlertSender {
+func NewAlertUseCase(ts repo.TelegramSender, p *repo.Plusofon, scheduleSvc *repo.ScheduleService) AlertSender {
 	return &alertUseCase{
-		alertRepo: ts,
-		plusofon:  p,
+		alertRepo:   ts,
+		plusofon:    p,
+		scheduleSvc: scheduleSvc,
 	}
 }
 
@@ -38,12 +41,17 @@ func (u *alertUseCase) SendAlerts(alerts []ent.Alert) {
 	for _, alerts := range firingAlerts {
 		for _, alert := range alerts {
 			if alert.Labels.Severity == "Critical" {
+				phoneNumber, err := u.scheduleSvc.GetPhoneNumberByTime()
+				if err != nil {
+					log.Printf("Error getting phone number by time: %v", err)
+					return
+				}
 				callData := ent.CallData{
-					Number:     getPhoneNumberByTime(),
+					Number:     phoneNumber,
 					LineNumber: "74951332210",
 					SipID:      "51326",
 				}
-				err := u.MakeCall(callData)
+				err = u.MakeCall(callData)
 				if err != nil {
 					log.Printf("Error making call: %v", err)
 				}
@@ -53,6 +61,19 @@ func (u *alertUseCase) SendAlerts(alerts []ent.Alert) {
 }
 
 func (u *alertUseCase) MakeCall(data ent.CallData) error {
+	// Получаем номер телефона по текущему времени
+	phoneNumber, err := u.scheduleSvc.GetPhoneNumberByTime()
+	if err != nil {
+		return fmt.Errorf("failed to get phone number by time: %w", err)
+	}
+	if phoneNumber == "" {
+		log.Println("No phone number found for the current time.")
+		return nil // Можно вернуть ошибку или просто пропустить звонок
+	}
+
+	// Обновляем номер телефона в CallData
+	data.Number = phoneNumber
+
 	url := "https://restapi.plusofon.ru/api/v1/call/quickcall"
 	JsonPayLoad, _ := json.Marshal(data)
 
@@ -164,21 +185,4 @@ func (u *alertUseCase) formatAlertMessage(alerts []ent.Alert) string {
 	}
 
 	return strings.Join(messages, "\n\n")
-}
-
-func getPhoneNumberByTime() string {
-	currentTime := time.Now().In(time.FixedZone("MSK", 3*60*60)) // Московское время
-
-	switch {
-	case currentTime.Hour() >= 8 && currentTime.Hour() < 12:
-		return "+7911090909"
-	case currentTime.Hour() >= 18 && currentTime.Hour() < 23:
-		return "+7911090909"
-	case currentTime.Hour() >= 23 || currentTime.Hour() < 8:
-		return "+7911090908"
-	case currentTime.Hour() >= 12 && currentTime.Hour() < 18:
-		return "+7911090907"
-	default:
-		return ""
-	}
 }

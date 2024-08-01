@@ -7,9 +7,17 @@ import (
 	"github.com/spf13/viper"
 	"log"
 	"net/http"
+	"os"
 )
 
 func initConfig() {
+	configDir := "config"
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		err = os.Mkdir(configDir, 0755)
+		if err != nil {
+			log.Fatalf("Error creating config directory: %v\n", err)
+		}
+	}
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./config")
@@ -31,12 +39,15 @@ func main() {
 		log.Fatalf("All configuration values are required")
 	}
 
+	scheduleRepo := repo.NewFileScheduleRepository("config/schedule.json")
+	scheduleService := repo.NewScheduleService(scheduleRepo)
+
 	plusofon, err := repo.NewPlusofon(plusofonApi, clientID)
 	if err != nil {
 		log.Fatalf("Error to connect to plusofon API")
 	}
 
-	telegramBot, err := repo.NewTelegramBot(botToken, warningChatID, criticalChatID)
+	telegramBot, err := repo.NewTelegramBot(botToken, warningChatID, criticalChatID, scheduleService)
 	if err != nil {
 		log.Fatalf("Error creating Telegram bot: %v", err)
 	}
@@ -45,7 +56,7 @@ func main() {
 		log.Fatalf("Error loading schedules: %v", err)
 	}
 
-	alertUseCase := app.NewAlertUseCase(telegramBot, plusofon)
+	alertUseCase := app.NewAlertUseCase(telegramBot, plusofon, scheduleService)
 	alertController := ctrl.NewAlertController(alertUseCase)
 
 	http.HandleFunc("/alert", alertController.HandleAlert)
