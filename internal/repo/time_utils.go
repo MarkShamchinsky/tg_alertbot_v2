@@ -81,18 +81,24 @@ func (r *FileScheduleRepository) Save(schedules []Schedule) error {
 
 // ScheduleService предоставляет методы для управления расписаниями
 type ScheduleService struct {
-	repo ScheduleRepository
+	repo            ScheduleRepository
+	callAttempts    map[string]int
+	successfulCalls map[string]time.Time
 }
 
 // SchedulerService определяет методы для работы с расписаниями
 type SchedulerService interface {
 	AddSchedule(startTime, endTime, phoneNumber string) error
 	GetPhoneNumberByTime() (string, error)
+	MarkCallSuccessful(phoneNumber string) error
+	GetNextPhoneNumber(currentPhoneNumber string) (string, error)
 }
+
+var _ SchedulerService = (*ScheduleService)(nil)
 
 // NewScheduleService создает новый экземпляр ScheduleService
 func NewScheduleService(repo ScheduleRepository) *ScheduleService {
-	return &ScheduleService{repo: repo}
+	return &ScheduleService{repo: repo, callAttempts: make(map[string]int), successfulCalls: make(map[string]time.Time)}
 }
 
 // AddSchedule добавляет новое расписание
@@ -135,6 +141,10 @@ func (s *ScheduleService) GetPhoneNumberByTime() (string, error) {
 		currentParsedTime, _ := time.Parse("15:04", currentTime)
 
 		if currentParsedTime.After(startTime) && currentParsedTime.Before(endTime) {
+			// Проверяем, если звонок на этот номер был успешным в последний час
+			if lastCallTime, ok := s.successfulCalls[schedule.PhoneNumber]; ok && time.Since(lastCallTime) < time.Hour {
+				continue
+			}
 			return schedule.PhoneNumber, nil
 		}
 	}
@@ -149,4 +159,26 @@ func validateTimeFormat(timeStr string) error {
 		return errors.New("invalid time format, use HH:MM")
 	}
 	return nil
+}
+
+func (s *ScheduleService) MarkCallSuccessful(phoneNumber string) error {
+	s.successfulCalls[phoneNumber] = time.Now()
+	delete(s.callAttempts, phoneNumber)
+	return nil
+}
+
+// GetNextPhoneNumber возвращает следующий номер из расписания
+func (s *ScheduleService) GetNextPhoneNumber(currentPhoneNumber string) (string, error) {
+	schedules, err := s.repo.Load()
+	if err != nil {
+		return "", err
+	}
+
+	for i, schedule := range schedules {
+		if schedule.PhoneNumber == currentPhoneNumber && i+1 < len(schedules) {
+			return schedules[i+1].PhoneNumber, nil
+		}
+	}
+
+	return "", errors.New("no more numbers to call")
 }

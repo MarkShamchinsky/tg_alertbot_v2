@@ -26,3 +26,27 @@ func (h *AlertController) HandleAlert(w http.ResponseWriter, r *http.Request) {
 	h.alertUseCase.SendAlerts(msg.Alerts)
 	w.WriteHeader(http.StatusOK)
 }
+
+func (h *AlertController) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	var webhookData struct {
+		To        string `json:"to"`
+		HookEvent string `json:"hook_event"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&webhookData); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if webhookData.HookEvent == "call_success" {
+		err := h.alertUseCase.MarkCallSuccessful(webhookData.To)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// обработка других событий
+	}
+
+	w.WriteHeader(http.StatusOK)
+}

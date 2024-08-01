@@ -16,6 +16,7 @@ import (
 type AlertSender interface {
 	SendAlerts(alerts []ent.Alert)
 	MakeCall(data ent.CallData) error
+	MarkCallSuccessful(phoneNumber string) error
 }
 
 type alertUseCase struct {
@@ -61,41 +62,53 @@ func (u *alertUseCase) SendAlerts(alerts []ent.Alert) {
 }
 
 func (u *alertUseCase) MakeCall(data ent.CallData) error {
-	// Получаем номер телефона по текущему времени
-	phoneNumber, err := u.scheduleSvc.GetPhoneNumberByTime()
-	if err != nil {
-		return fmt.Errorf("failed to get phone number by time: %w", err)
+
+	var attempts int
+	maxAttempts := 3
+	phoneNumber := data.Number
+
+	for {
+		// Формируем запрос на звонок
+		url := "https://restapi.plusofon.ru/api/v1/call/quickcall"
+		JsonPayLoad, _ := json.Marshal(data)
+
+		req, _ := http.NewRequest("POST", url, bytes.NewBuffer(JsonPayLoad))
+		req.Header.Add("Content-Type", "application/json")
+		req.Header.Add("Accept", "application/json")
+		req.Header.Add("Client", u.plusofon.ClientID)
+		req.Header.Add("Authorization", "Bearer "+u.plusofon.PlusofonToken)
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			// Если звонок успешен, помечаем его как успешный
+			err = u.scheduleSvc.MarkCallSuccessful(phoneNumber)
+			if err != nil {
+				log.Printf("Error marking call successful: %v", err)
+			}
+			return nil // Звонок успешен, выходим из функции
+		}
+
+		// Проверяем на ошибки выполнения HTTP-запроса и статус ответа
+		if err != nil {
+			log.Printf("Error making call: %v", err)
+		} else if resp.StatusCode != http.StatusOK {
+			log.Printf("Failed to make call, status: %s", resp.Status)
+		}
+
+		attempts++
+		if attempts >= maxAttempts {
+			// Если попытки исчерпаны, переходим к следующему номеру
+			nextPhoneNumber, err := u.scheduleSvc.GetNextPhoneNumber(phoneNumber)
+			if err != nil {
+				log.Printf("Error getting next phone number: %v", err)
+				return err
+			}
+			phoneNumber = nextPhoneNumber
+			data.Number = phoneNumber
+			attempts = 0 // Сбрасываем счетчик попыток для нового номера
+		}
 	}
-	if phoneNumber == "" {
-		log.Println("No phone number found for the current time.")
-		return nil // Можно вернуть ошибку или просто пропустить звонок
-	}
-
-	// Обновляем номер телефона в CallData
-	data.Number = phoneNumber
-
-	url := "https://restapi.plusofon.ru/api/v1/call/quickcall"
-	JsonPayLoad, _ := json.Marshal(data)
-
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(JsonPayLoad))
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Accept", "application/json")
-	req.Header.Add("Client", u.plusofon.ClientID)
-	req.Header.Add("Authorization", "Bearer"+u.plusofon.PlusofonToken)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to make call: %s", resp.Status)
-	}
-
-	return nil
 }
 
 func (u *alertUseCase) groupAlertsByAlertGroup(alerts []ent.Alert) map[string][]ent.Alert {
@@ -185,4 +198,8 @@ func (u *alertUseCase) formatAlertMessage(alerts []ent.Alert) string {
 	}
 
 	return strings.Join(messages, "\n\n")
+}
+
+func (u *alertUseCase) MarkCallSuccessful(phoneNumber string) error {
+	return u.scheduleSvc.MarkCallSuccessful(phoneNumber)
 }

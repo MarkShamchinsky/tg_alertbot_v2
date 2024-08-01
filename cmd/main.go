@@ -59,6 +59,7 @@ func main() {
 	alertUseCase := app.NewAlertUseCase(telegramBot, plusofon, scheduleService)
 	alertController := ctrl.NewAlertController(alertUseCase)
 
+	http.HandleFunc("/webhook", alertController.HandleWebhook)
 	http.HandleFunc("/alert", alertController.HandleAlert)
 	log.Println("Starting server on :8082")
 	log.Fatal(http.ListenAndServe(":8082", nil))
