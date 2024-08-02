@@ -1,15 +1,15 @@
 package repo
 
 import (
+	ent "AlertManagerBot/internal/entity"
 	"errors"
 	"fmt"
 	tgbotapi "gopkg.in/telegram-bot-api.v4"
 	"log"
 	"strconv"
 	"strings"
+	"time"
 )
-
-const maxMsgLength = 4096
 
 type BotAPI interface {
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
@@ -20,6 +20,7 @@ type TelegramBot struct {
 	warningChatID  string
 	criticalChatID string
 	ScheduleSvc    *ScheduleService
+	muteUntil      time.Time
 }
 
 type TelegramSender interface {
@@ -27,6 +28,7 @@ type TelegramSender interface {
 	GetChatID(severity string) (int64, error)
 	HandleSetScheduleCommand(message *tgbotapi.Message) error
 	HandleUpdates(update tgbotapi.Update)
+	splitLongMessage(message string) []string
 }
 
 func NewTelegramBot(token, warningChatID, criticalChatID string, scheduleSvc *ScheduleService) (*TelegramBot, error) {
@@ -43,7 +45,7 @@ func NewTelegramBot(token, warningChatID, criticalChatID string, scheduleSvc *Sc
 }
 
 func (t *TelegramBot) SendMessage(chatID int64, messageText string) error {
-	messages := splitLongMessage(messageText)
+	messages := t.splitLongMessage(messageText)
 	for _, msg := range messages {
 		message := tgbotapi.NewMessage(chatID, msg)
 		if _, err := t.Bot.Send(message); err != nil {
@@ -67,19 +69,19 @@ func (t *TelegramBot) GetChatID(severity string) (int64, error) {
 	return strconv.ParseInt(chatID, 10, 64)
 }
 
-func splitLongMessage(message string) []string {
-	if len(message) <= maxMsgLength {
+func (t *TelegramBot) splitLongMessage(message string) []string {
+	if len(message) <= ent.MaxMsgLength {
 		return []string{message}
 	}
 
 	var result []string
-	for len(message) > maxMsgLength {
-		splitIndex := maxMsgLength
+	for len(message) > ent.MaxMsgLength {
+		splitIndex := ent.MaxMsgLength
 		for splitIndex > 0 && message[splitIndex] != '\n' {
 			splitIndex--
 		}
 		if splitIndex == 0 {
-			splitIndex = maxMsgLength
+			splitIndex = ent.MaxMsgLength
 		}
 
 		result = append(result, message[:splitIndex])
@@ -101,36 +103,62 @@ func (t *TelegramBot) HandleUpdates(update tgbotapi.Update) {
 			if err != nil {
 				log.Printf("Error handling set_schedule command: %v", err)
 			}
+		case "mute":
+			err := t.HandleSetMuteUntilCommand(update.Message)
+			if err != nil {
+				log.Printf("Error handling mute command: %v", err)
+			}
 		default:
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Unknown command")
-			t.Bot.Send(msg)
+			_, err := t.Bot.Send(msg)
+			if err != nil {
+				log.Printf("Error sending message to Telegram: %v", err)
+			}
 		}
 	} else {
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Please send a command!")
-		t.Bot.Send(msg)
+		_, err := t.Bot.Send(msg)
+		if err != nil {
+			log.Printf("Error sending message to Telegram: %v", err)
+		}
 	}
 }
 
-// HandleSetScheduleCommand обрабатывает команду добавления расписания
+// HandleSetScheduleCommand handles the command for adding a schedule
 func (t *TelegramBot) HandleSetScheduleCommand(message *tgbotapi.Message) error {
 	args := message.CommandArguments()
 	parts := strings.Split(args, " ")
-	if len(parts) != 3 {
-		msg := tgbotapi.NewMessage(message.Chat.ID, "Usage: /set_schedule <start_time> <end_time> <phone_number>\nExample: /set_schedule 09:00 17:00 +123456789")
+
+	if len(parts)%3 != 0 {
+		log.Printf("Invalid command format: %s", args)
+		msg := tgbotapi.NewMessage(message.Chat.ID, "Usage: /set_schedule <start_time1> <end_time1> <phone_number1> [<start_time2> <end_time2> <phone_number2> ...]\nExample: /set_schedule 09:00 17:00 +123456789 18:00 20:00 +987654321")
 		_, err := t.Bot.Send(msg)
 		return err
 	}
 
-	startTime, endTime, phoneNumber := parts[0], parts[1], parts[2]
+	for i := 0; i < len(parts); i += 3 {
+		startTime, endTime, phoneNumber := parts[i], parts[i+1], parts[i+2]
 
-	err := t.ScheduleSvc.AddSchedule(startTime, endTime, phoneNumber)
-	if err != nil {
-		msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Failed to add schedule: %s", err))
-		_, err := t.Bot.Send(msg)
-		return err
+		log.Printf("Adding schedule for %s - %s: %s", startTime, endTime, phoneNumber)
+		err := t.ScheduleSvc.AddSchedule(startTime, endTime, phoneNumber)
+		if err != nil {
+			log.Printf("Failed to add schedule for %s - %s: %s", startTime, endTime, err)
+			msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Failed to add schedule for %s - %s: %s", startTime, endTime, err))
+			_, err := t.Bot.Send(msg)
+			return err
+		}
 	}
 
-	msg := tgbotapi.NewMessage(message.Chat.ID, "Schedule added successfully!")
-	_, err = t.Bot.Send(msg)
+	log.Printf("All schedules added successfully!")
+	msg := tgbotapi.NewMessage(message.Chat.ID, "All schedules added successfully!")
+	_, err := t.Bot.Send(msg)
+	return err
+}
+
+func (t *TelegramBot) HandleSetMuteUntilCommand(message *tgbotapi.Message) error {
+	t.muteUntil = time.Now().Add(2 * time.Hour)
+
+	msg := tgbotapi.NewMessage(message.Chat.ID, "Mute for 2 hours")
+	_, err := t.Bot.Send(msg)
 	return err
 }

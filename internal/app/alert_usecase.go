@@ -17,6 +17,10 @@ type AlertSender interface {
 	SendAlerts(alerts []ent.Alert)
 	MakeCall(data ent.CallData) error
 	MarkCallSuccessful(phoneNumber string) error
+	groupAlertsByAlertGroup(alerts []ent.Alert) map[string][]ent.Alert
+	separateAlertsByStatus(alertGroups map[string][]ent.Alert) (map[string][]ent.Alert, map[string][]ent.Alert)
+	sendGroupedAlerts(alerts map[string][]ent.Alert)
+	formatAlertMessage(alerts []ent.Alert) string
 }
 
 type alertUseCase struct {
@@ -34,81 +38,94 @@ func NewAlertUseCase(ts repo.TelegramSender, p *repo.Plusofon, scheduleSvc *repo
 }
 
 func (u *alertUseCase) SendAlerts(alerts []ent.Alert) {
+	log.Println("Starting SendAlerts")
+	if len(alerts) == 0 {
+		log.Println("No alerts to send")
+		return
+	}
+
+	firstAlert := alerts[0]
+
+	if firstAlert.Labels.Severity == "Critical" {
+		log.Println("Severity is Critical")
+		phoneNumber, err := u.scheduleSvc.GetPhoneNumberByTime()
+		if err != nil {
+			log.Printf("Error getting phone number by time: %v", err)
+			return
+		}
+		log.Printf("Phone number: %s", phoneNumber)
+		callData := ent.CallData{
+			Number:     phoneNumber,
+			LineNumber: "74951332210",
+			SipID:      "51326",
+		}
+		err = u.MakeCall(callData)
+		if err != nil {
+			log.Printf("Error making call: %v", err)
+		}
+	}
+
 	alertGroups := u.groupAlertsByAlertGroup(alerts)
 	firingAlerts, resolvedAlerts := u.separateAlertsByStatus(alertGroups)
 
+	log.Printf("Number of firing alerts: %d", len(firingAlerts))
+	log.Printf("Number of resolved alerts: %d", len(resolvedAlerts))
+
 	u.sendGroupedAlerts(firingAlerts)
 	u.sendGroupedAlerts(resolvedAlerts)
-	for _, alerts := range firingAlerts {
-		for _, alert := range alerts {
-			if alert.Labels.Severity == "Critical" {
-				phoneNumber, err := u.scheduleSvc.GetPhoneNumberByTime()
-				if err != nil {
-					log.Printf("Error getting phone number by time: %v", err)
-					return
-				}
-				callData := ent.CallData{
-					Number:     phoneNumber,
-					LineNumber: "74951332210",
-					SipID:      "51326",
-				}
-				err = u.MakeCall(callData)
-				if err != nil {
-					log.Printf("Error making call: %v", err)
-				}
-			}
-		}
-	}
+
+	log.Println("Finished SendAlerts")
 }
 
-func (u *alertUseCase) MakeCall(data ent.CallData) error {
+func (u *alertUseCase) MakeCall(callData ent.CallData) error {
+	if u.scheduleSvc.IsMuted() {
+		log.Printf("Call was muted")
+		return nil
+	}
+	const maxAttempts = 3
+	for attempts := 0; attempts < maxAttempts; attempts++ {
+		payload, err := json.Marshal(callData)
+		if err != nil {
+			return fmt.Errorf("failed to marshal call data: %w", err)
+		}
 
-	var attempts int
-	maxAttempts := 3
-	phoneNumber := data.Number
+		req, err := http.NewRequest(http.MethodPost, "https://restapi.plusofon.ru/api/v1/call/quickcall", bytes.NewBuffer(payload))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
 
-	for {
-		// Формируем запрос на звонок
-		url := "https://restapi.plusofon.ru/api/v1/call/quickcall"
-		JsonPayLoad, _ := json.Marshal(data)
-
-		req, _ := http.NewRequest("POST", url, bytes.NewBuffer(JsonPayLoad))
-		req.Header.Add("Content-Type", "application/json")
-		req.Header.Add("Accept", "application/json")
-		req.Header.Add("Client", u.plusofon.ClientID)
-		req.Header.Add("Authorization", "Bearer "+u.plusofon.PlusofonToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Client", u.plusofon.ClientID)
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", u.plusofon.PlusofonToken))
 
 		client := &http.Client{}
 		resp, err := client.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			// Если звонок успешен, помечаем его как успешный
-			err = u.scheduleSvc.MarkCallSuccessful(phoneNumber)
-			if err != nil {
-				log.Printf("Error marking call successful: %v", err)
-			}
-			return nil // Звонок успешен, выходим из функции
-		}
 
-		// Проверяем на ошибки выполнения HTTP-запроса и статус ответа
 		if err != nil {
-			log.Printf("Error making call: %v", err)
-		} else if resp.StatusCode != http.StatusOK {
-			log.Printf("Failed to make call, status: %s", resp.Status)
+			return fmt.Errorf("failed to make call: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			if err := u.scheduleSvc.MarkCallSuccessful(callData.Number); err != nil {
+				return fmt.Errorf("failed to mark call successful: %w", err)
+			}
+			return nil
 		}
 
-		attempts++
-		if attempts >= maxAttempts {
-			// Если попытки исчерпаны, переходим к следующему номеру
-			nextPhoneNumber, err := u.scheduleSvc.GetNextPhoneNumber(phoneNumber)
-			if err != nil {
-				log.Printf("Error getting next phone number: %v", err)
-				return err
-			}
-			phoneNumber = nextPhoneNumber
-			data.Number = phoneNumber
-			attempts = 0 // Сбрасываем счетчик попыток для нового номера
+		nextPhoneNumber, err := u.scheduleSvc.GetNextPhoneNumber(callData.Number)
+		if err != nil {
+			return fmt.Errorf("failed to get next phone number: %w", err)
 		}
+		callData.Number = nextPhoneNumber
 	}
+
+	return fmt.Errorf("maximum attempts reached")
+}
+
+func (u *alertUseCase) MarkCallSuccessful(phoneNumber string) error {
+	return u.scheduleSvc.MarkCallSuccessful(phoneNumber)
 }
 
 func (u *alertUseCase) groupAlertsByAlertGroup(alerts []ent.Alert) map[string][]ent.Alert {
@@ -198,8 +215,4 @@ func (u *alertUseCase) formatAlertMessage(alerts []ent.Alert) string {
 	}
 
 	return strings.Join(messages, "\n\n")
-}
-
-func (u *alertUseCase) MarkCallSuccessful(phoneNumber string) error {
-	return u.scheduleSvc.MarkCallSuccessful(phoneNumber)
 }

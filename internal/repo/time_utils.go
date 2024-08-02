@@ -48,7 +48,12 @@ func (r *FileScheduleRepository) Load() ([]Schedule, error) {
 		}
 		return nil, err
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			fmt.Printf("Error closing file: %v\n", err)
+		}
+	}(file)
 
 	bytes, err := io.ReadAll(file)
 	if err != nil {
@@ -84,6 +89,11 @@ type ScheduleService struct {
 	repo            ScheduleRepository
 	callAttempts    map[string]int
 	successfulCalls map[string]time.Time
+	muteUntil       time.Time
+}
+
+func (s *ScheduleService) IsMuted() bool {
+	return time.Now().Before(s.muteUntil)
 }
 
 // SchedulerService определяет методы для работы с расписаниями

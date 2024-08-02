@@ -5,6 +5,7 @@ import (
 )
 
 const (
+	MaxMsgLength  = 4096
 	FiringEmoji   = "❗️"
 	ResolvedEmoji = "✅"
 )

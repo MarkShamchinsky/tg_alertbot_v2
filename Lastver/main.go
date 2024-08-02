@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	tgbotapi "gopkg.in/telegram-bot-api.v4"
@@ -24,8 +23,6 @@ var (
 	bot            *tgbotapi.BotAPI
 	warningChatID  string
 	criticalChatID string
-	resolvedAlerts = make(map[string]bool)
-	mu             sync.Mutex
 	alertChannel   = make(chan AlertManagerMessage, 100) // Buffered channel for incoming alerts
 )
 
