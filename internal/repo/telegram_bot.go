@@ -156,9 +156,19 @@ func (t *TelegramBot) HandleSetScheduleCommand(message *tgbotapi.Message) error 
 }
 
 func (t *TelegramBot) HandleSetMuteUntilCommand(message *tgbotapi.Message) error {
+	log.Println("HandleSetMuteUntilCommand: Started")
+
 	t.muteUntil = time.Now().Add(2 * time.Hour)
+
+	log.Printf("HandleSetMuteUntilCommand: Mute set to %v", t.muteUntil)
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, "Mute for 2 hours")
 	_, err := t.Bot.Send(msg)
+	if err != nil {
+		log.Printf("HandleSetMuteUntilCommand: Error sending message: %v", err)
+	}
+
+	log.Println("HandleSetMuteUntilCommand: Ended")
+
 	return err
 }
